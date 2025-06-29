@@ -12,6 +12,31 @@ const PORT = process.env.PORT || 3000;
 // Middleware setup
 app.use(bodyParser.json());
 
+// Logger middleware
+app.use((req, res, next) => {
+  const now = new Date().toISOString();
+  console.log(`[${now}] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
+// Authentication middleware
+app.use((req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  if (!apiKey || apiKey !== 'mysecretkey') {
+    return res.status(401).json({ error: 'Unauthorized: Invalid or missing API key' });
+  }
+  next();
+});
+
+// Validation middleware for product creation and update
+function validateProduct(req, res, next) {
+  const { name, description, price, category, inStock } = req.body;
+  if (!name || !description || typeof price !== 'number' || !category || typeof inStock !== 'boolean') {
+    return res.status(400).json({ error: 'Invalid product data' });
+  }
+  next();
+}
+
 // Sample in-memory products database
 let products = [
   {
@@ -52,15 +77,100 @@ app.get('/', (req, res) => {
 // PUT /api/products/:id - Update a product
 // DELETE /api/products/:id - Delete a product
 
-// Example route implementation for GET /api/products
+// Enhanced GET /api/products with filtering and pagination
 app.get('/api/products', (req, res) => {
-  res.json(products);
+  let result = [...products];
+  // Filtering by category
+  if (req.query.category) {
+    result = result.filter(p => p.category === req.query.category);
+  }
+  // Pagination
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || result.length;
+  const start = (page - 1) * limit;
+  const end = start + limit;
+  const paginated = result.slice(start, end);
+  res.json({
+    total: result.length,
+    page,
+    limit,
+    products: paginated
+  });
 });
 
-// TODO: Implement custom middleware for:
-// - Request logging
-// - Authentication
-// - Error handling
+// GET /api/products/:id - Get a specific product
+app.get('/api/products/:id', (req, res) => {
+  const product = products.find(p => p.id === req.params.id);
+  if (!product) {
+    return res.status(404).json({ error: 'Product not found' });
+  }
+  res.json(product);
+});
+
+// Search endpoint: GET /api/products/search?name=
+app.get('/api/products/search', (req, res) => {
+  const name = req.query.name;
+  if (!name) {
+    return res.status(400).json({ error: 'Missing name query parameter' });
+  }
+  const matches = products.filter(p => p.name.toLowerCase().includes(name.toLowerCase()));
+  res.json(matches);
+});
+
+// Statistics endpoint: GET /api/products/stats
+app.get('/api/products/stats', (req, res) => {
+  const stats = {};
+  for (const p of products) {
+    stats[p.category] = (stats[p.category] || 0) + 1;
+  }
+  res.json({ countByCategory: stats });
+});
+
+// POST /api/products - Create a new product
+app.post('/api/products', validateProduct, (req, res) => {
+  const { name, description, price, category, inStock } = req.body;
+  const newProduct = {
+    id: uuidv4(),
+    name,
+    description,
+    price,
+    category,
+    inStock
+  };
+  products.push(newProduct);
+  res.status(201).json(newProduct);
+});
+
+// PUT /api/products/:id - Update a product
+app.put('/api/products/:id', validateProduct, (req, res) => {
+  const product = products.find(p => p.id === req.params.id);
+  if (!product) {
+    return res.status(404).json({ error: 'Product not found' });
+  }
+  const { name, description, price, category, inStock } = req.body;
+  product.name = name;
+  product.description = description;
+  product.price = price;
+  product.category = category;
+  product.inStock = inStock;
+  res.json(product);
+});
+
+// DELETE /api/products/:id - Delete a product
+app.delete('/api/products/:id', (req, res) => {
+  const index = products.findIndex(p => p.id === req.params.id);
+  if (index === -1) {
+    return res.status(404).json({ error: 'Product not found' });
+  }
+  const deleted = products.splice(index, 1);
+  res.json({ message: 'Product deleted', product: deleted[0] });
+});
+
+// Global error handling middleware (should be after all routes)
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Internal Server Error' });
+});
 
 // Start the server
 app.listen(PORT, () => {
